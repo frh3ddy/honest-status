@@ -197,3 +197,11 @@ test('board re-verifies policy merges already on main', () => {
   assert.equal(board.errors.length, 1);
   assert.match(board.errors[0].message, /merged by the test-only policy .* src\.txt isn't a test file/);
 });
+
+// Under --plugin-dir, Claude Code leaves ${user_config.x} in the merge skill's command as is.
+test('merge treats unfilled ${user_config} options as unset', () => {
+  const r = merge('TASK-5', '--main', '${user_config.main}', '--checks', '${user_config.checks}');
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /No checks configured/);
+  assert.equal(msh('git', ['log', '-1', '--format=%s', 'main']).trim(), 'feat(TASK-5): skips a test');
+});
