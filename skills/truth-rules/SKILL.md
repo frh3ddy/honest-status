@@ -47,6 +47,19 @@ them to type that command. Don't merge into the main branch yourself (no `git me
 `git commit` on main, no running `truth.ts --merge`), even when asked in words: the typed command
 is what records their approval.
 
+One exception: the test-only policy. If the project has a `.honest-status/test-only` file on its
+main branch and you are asked to act as the approver for an In Review task that only adds or edits
+tests, you may run:
+
+```sh
+node "${CLAUDE_SKILL_DIR}/../../bin/truth.ts" --merge <task-id> --policy test-only --main '${user_config.main}' --checks '${user_config.checks}'
+```
+
+The script decides, not you: it refuses anything but test files the policy lists, deleted or
+skipped tests, snapshots and test config, and merges only when the checks pass. If it says
+"Not merged", leave the task In Review for the human. Never edit the policy file to get a merge
+through.
+
 ## Tests
 
 Never delete, skip (`.skip`, `.only`, `xit`, `@skip`…) or loosen a failing or flaky test to get

@@ -2,9 +2,9 @@
 // Needs the backlog CLI on PATH. Run: node --test test/truth.test.ts
 
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -113,11 +113,21 @@ msh('backlog', ['init', 'demo', '--defaults', '--integration-mode', 'none']);
 msh('sed', ['-i.bak', 's/^statuses: .*/statuses: ["To Do", "In Progress", "Blocked", "In Review", "Done"]/', 'backlog/config.yml']);
 msh('backlog', ['task', 'create', 'ready one', '--plain']); // TASK-1
 msh('backlog', ['task', 'create', 'not ready', '--plain']); // TASK-2
+msh('backlog', ['task', 'create', 'adds a test', '--plain']); // TASK-3
+msh('backlog', ['task', 'create', 'test plus code', '--plain']); // TASK-4
+msh('backlog', ['task', 'create', 'skips a test', '--plain']); // TASK-5
+const write = (files: Record<string, string>): void => {
+  for (const [file, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(mdir, file)), { recursive: true });
+    writeFileSync(join(mdir, file), text);
+  }
+};
+write({ '.honest-status/test-only': '# test files an approver agent may merge\ntest/**/*.test.ts\n' });
 msh('git', ['add', '-A']);
 msh('git', ['commit', '-q', '-m', 'init']);
-const work = (id: string, status: string): void => {
+const work = (id: string, status: string, files: Record<string, string> = { [`${id}.txt`]: id }): void => {
   msh('git', ['checkout', '-q', '-b', `task/${id}`, 'main']);
-  msh('sh', ['-c', `echo ${id} > ${id}.txt`]);
+  write(files);
   msh('backlog', ['task', 'edit', id, '-s', status, '-a', '@fredy', '--final-summary', 'did it\n\nHow to review: cat the file', '--plain']);
   msh('git', ['add', '-A']);
   msh('git', ['commit', '-q', '-m', `wip(${id})`]);
@@ -125,6 +135,9 @@ const work = (id: string, status: string): void => {
 };
 work('TASK-1', 'In Review');
 work('TASK-2', 'In Progress');
+work('TASK-3', 'In Review', { 'test/a.test.ts': "test('a', () => {});\n" });
+work('TASK-4', 'In Review', { 'test/b.test.ts': "test('b', () => {});\n", 'src.txt': 'code\n' });
+work('TASK-5', 'In Review', { 'test/c.test.ts': "test.skip('c', () => {});\n" });
 const mainHead = (): string => msh('git', ['rev-parse', 'main']).trim();
 
 test('merge refuses a task that is not In Review, and leaves main alone', () => {
@@ -155,4 +168,32 @@ test('merge squashes with the task id and Approved-by: human, and sets Done', ()
   assert.deepEqual(board.built, ['TASK-1']);
   assert.deepEqual(board.errors, []);
   assert.match(merge('TASK-1').out, /already has a commit with "\(TASK-1\)"/);
+});
+
+test('policy merge refuses anything but tests, and leaves main alone', () => {
+  const before = mainHead();
+  assert.match(merge('TASK-4', '--policy', 'test-only', '--checks', 'true').out, /src\.txt isn't a test file under the policy/);
+  assert.match(merge('TASK-5', '--policy', 'test-only', '--checks', 'true').out, /adds a skip or only: test\.skip/);
+  assert.match(merge('TASK-3', '--policy', 'test-only').out, /needs the checks to pass/);
+  assert.match(merge('TASK-3', '--policy', 'tests').out, /Usage:/);
+  assert.equal(mainHead(), before);
+  assert.equal(msh('git', ['status', '--porcelain', '--untracked-files=no']), '');
+});
+
+test('policy merge of test-only changes says Approved-by: policy:test-only', () => {
+  const r = merge('TASK-3', '--policy', 'test-only', '--checks', 'test -f test/a.test.ts');
+  assert.equal(r.code, 0, r.out);
+  assert.equal(msh('git', ['log', '-1', '--format=%(trailers:key=Approved-by,valueonly)']).trim(), 'policy:test-only');
+  const board = JSON.parse(execFileSync('node', [TRUTH, '--json'], { cwd: mdir, encoding: 'utf8' }));
+  assert.deepEqual(board.built, ['TASK-1', 'TASK-3']);
+  assert.deepEqual(board.errors, []);
+});
+
+test('board re-verifies policy merges already on main', () => {
+  write({ 'src.txt': 'forged\n' });
+  msh('git', ['add', 'src.txt']);
+  msh('git', ['commit', '-q', '-m', 'feat(TASK-9): forged', '--trailer', 'Approved-by: policy:test-only']);
+  const board = JSON.parse(execFileSync('node', [TRUTH, '--json'], { cwd: mdir, encoding: 'utf8' }));
+  assert.equal(board.errors.length, 1);
+  assert.match(board.errors[0].message, /merged by the test-only policy .* src\.txt isn't a test file/);
 });

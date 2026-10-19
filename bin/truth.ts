@@ -5,6 +5,9 @@
 //   node bin/truth.ts [dir] --json   the same data as JSON, for tools (always exits 0)
 //   node bin/truth.ts --hook         Claude Code Stop hook
 //   node bin/truth.ts --merge <id>   the human's approval: squash-merge the task's branch, set Done
+//   node bin/truth.ts --merge <id> --policy test-only
+//                                    an approver agent's merge, allowed only for test-only changes
+//                                    that the project's written policy covers (see POLICY_FILE)
 //
 // Options, all optional. As a plugin, they come from its userConfig (`human`, `main`), which
 // Claude Code passes to hooks as CLAUDE_PLUGIN_OPTION_HUMAN and CLAUDE_PLUGIN_OPTION_MAIN.
@@ -18,10 +21,14 @@
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, matchesGlob, resolve } from 'node:path';
 
 const SCHEMA_VERSION = 1;
 const STATUSES = ['To Do', 'In Progress', 'Blocked', 'In Review', 'Done'];
+// The test-only policy: one glob per line, like test/**/*.test.ts. Read from the main branch, never
+// from the branch being merged. No file, or no globs: nothing merges without a human.
+const POLICY_FILE = '.honest-status/test-only';
+const POLICY_TRAILER = 'policy:test-only';
 
 interface ListTask {
   id: string;
@@ -120,6 +127,18 @@ function buildReport(root: string, opts: Options): Report {
   }
   const merged = (id: string): boolean => mainSubjects?.some((s) => s.includes(`(${id.toLowerCase()})`)) ?? false;
 
+  // Re-verify every policy merge against the policy as it stood before it.
+  const log = hasMain ? run('git', ['log', opts.mainBranch, '--format=%H%x09%(trailers:key=Approved-by,valueonly,separator=%x2C)%x09%s'], root) : null;
+  for (const line of (log ?? '').split('\n')) {
+    const [hash = '', approvedBy = '', subject = ''] = line.split('\t');
+    if (approvedBy.trim() !== POLICY_TRAILER) continue;
+    const id = /\(([^)]+)\)/.exec(subject)?.[1] ?? '-';
+    const problems = testOnlyProblems(root, id, `${hash}^`, [`${hash}^`, hash]);
+    if (problems.length > 0) {
+      errors.push({ task: id, message: `was merged by the test-only policy in ${hash.slice(0, 7)}, but ${problems.join('; ')}` });
+    }
+  }
+
   const human = opts.human ? norm(opts.human) : null;
   const assignedToHuman = (t: ListTask): boolean =>
     human ? t.assignees.some((a) => norm(a) === human) : t.assignees.length > 0;
@@ -205,10 +224,48 @@ function printBoard(r: Report): void {
   console.log(out.join('\n'));
 }
 
+// Why a change isn't test-only under the policy on `policyRef`; empty means it is. `diff` picks the
+// change: ['--cached'] for a merge in progress, [parent, commit] for one already on main.
+function testOnlyProblems(root: string, id: string, policyRef: string, diff: string[]): string[] {
+  const git = (...args: string[]): string => run('git', args, root) ?? '';
+  const globs = git('show', `${policyRef}:${POLICY_FILE}`)
+    .split('\n')
+    .map((l) => l.replace(/#.*/, '').trim())
+    .filter(Boolean);
+  if (globs.length === 0) return [`there is no test-only policy (${POLICY_FILE} lists no test files)`];
+
+  const ownTask = new RegExp(`(^|/)tasks/${id.toLowerCase()} - [^/]*\\.md$`);
+  const problems: string[] = [];
+  const tests: string[] = [];
+  for (const line of git('diff', '--name-status', '--no-renames', ...diff).split('\n').filter(Boolean)) {
+    const [status = '', file = ''] = line.split('\t');
+    if (ownTask.test(file.toLowerCase())) continue; // the task's own status and summary
+    if (status !== 'A' && status !== 'M') problems.push(`${file} is ${status === 'D' ? 'deleted' : `changed (${status})`}`);
+    else if (!globs.some((g) => matchesGlob(file, g))) problems.push(`${file} isn't a test file under the policy`);
+    else if (/(^|\/)__snapshots__\/|\.snap$/.test(file)) problems.push(`${file} is a snapshot`);
+    else if (/(^|[._-])(config|setup)([._-]|$)/i.test(basename(file))) problems.push(`${file} is test config`);
+    else tests.push(file);
+  }
+  if (tests.length === 0 && problems.length === 0) problems.push('it changes no test files');
+
+  // ponytail: line-based scan; a test removed or skipped across lines it can't see gets past it.
+  for (const line of tests.length > 0 ? git('diff', '-U0', ...diff, '--', ...tests).split('\n') : []) {
+    if (line.startsWith('+++') || line.startsWith('---')) continue;
+    if (line.startsWith('+') && /\.(skip|only)\b|\b(xit|xtest|xdescribe|fit|fdescribe)\s*\(|@skip/.test(line)) {
+      problems.push(`it adds a skip or only: ${line.slice(1).trim()}`);
+    } else if (line.startsWith('-') && /\b(it|test|describe)\s*\(/.test(line)) {
+      problems.push(`it removes or renames a test: ${line.slice(1).trim()}`);
+    }
+  }
+  return problems;
+}
+
 // The human typed /honest-status:merge: squash the task's branch into main, check the merged
-// result, set Done and commit with the task id and `Approved-by: human`. On any failure, main is
-// put back as it was. Returns the exit code.
-function merge(root: string, id: string, opts: Options, branchArg: string | null, checks: string | null): number {
+// result, set Done and commit with the task id and `Approved-by: human`. With `policy`, an approver
+// agent's merge instead: the change must be test-only under the policy and the checks must pass,
+// and the commit says `Approved-by: policy:test-only`. On any failure, main is put back as it was.
+// Returns the exit code.
+function merge(root: string, id: string, opts: Options, branchArg: string | null, checks: string | null, policy: boolean): number {
   const fail = (message: string): number => {
     console.error(`Not merged: ${message}`);
     return 1;
@@ -263,6 +320,11 @@ function merge(root: string, id: string, opts: Options, branchArg: string | null
   }
   if (task.status !== 'In Review') return undo(`${id} is ${task.status}; only In Review tasks can be merged`);
   if (problems.length > 0) return undo(problems.map((p) => `${p.task} ${p.message}`).join('; '));
+  if (policy) {
+    if (!checks) return undo('a test-only merge needs the checks to pass, and no checks are configured');
+    const notTestOnly = testOnlyProblems(root, id, opts.mainBranch, ['--cached']);
+    if (notTestOnly.length > 0) return undo(`not a test-only change: ${notTestOnly.join('; ')}; it needs a human merge`);
+  }
 
   if (checks) {
     console.log(`Running checks: ${checks}`);
@@ -274,10 +336,11 @@ function merge(root: string, id: string, opts: Options, branchArg: string | null
 
   if (run('backlog', ['task', 'edit', id, '-s', 'Done', '--plain'], root) === null) return undo(`couldn't set ${id} to Done`);
   git('add', '--', task.path);
-  if (git('commit', '--quiet', '-m', `feat(${id}): ${task.title}`, '--trailer', 'Approved-by: human') === null) {
+  const approvedBy = policy ? POLICY_TRAILER : 'human';
+  if (git('commit', '--quiet', '-m', `feat(${id}): ${task.title}`, '--trailer', `Approved-by: ${approvedBy}`) === null) {
     return undo("git commit failed (a commit hook may have refused it)");
   }
-  console.log(`Merged ${branch} into ${opts.mainBranch} as "feat(${id}): ${task.title}" and set ${id} Done.`);
+  console.log(`Merged ${branch} into ${opts.mainBranch} as "feat(${id}): ${task.title}" (Approved-by: ${approvedBy}) and set ${id} Done.`);
   console.log(`The branch ${branch} is kept; delete it with: git branch -D ${branch}`);
   return 0;
 }
@@ -347,7 +410,7 @@ function main(): void {
     runHook(opts);
     return;
   }
-  const valued = ['--human', '--main', '--merge', '--branch', '--checks'];
+  const valued = ['--human', '--main', '--merge', '--branch', '--checks', '--policy'];
   const start = args.find((a, i) => !a.startsWith('--') && !valued.includes(args[i - 1] ?? '')) ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
   const root = findRoot(start);
   if (!root) {
@@ -357,10 +420,12 @@ function main(): void {
   }
   const mergeId = option(args, '--merge', '');
   if (args.includes('--merge')) {
-    process.exitCode = mergeId
-      ? merge(root, mergeId, opts, option(args, '--branch', ''), option(args, '--checks', 'CLAUDE_PLUGIN_OPTION_CHECKS'))
+    const policy = option(args, '--policy', '');
+    const ok = mergeId && (policy === null || policy === 'test-only');
+    process.exitCode = ok
+      ? merge(root, mergeId, opts, option(args, '--branch', ''), option(args, '--checks', 'CLAUDE_PLUGIN_OPTION_CHECKS'), policy !== null)
       : 1;
-    if (!mergeId) console.error('Usage: node bin/truth.ts --merge <task-id> [--branch <name>] [--checks <cmd>]');
+    if (!ok) console.error('Usage: node bin/truth.ts --merge <task-id> [--branch <name>] [--checks <cmd>] [--policy test-only]');
     return;
   }
   const report = buildReport(root, opts);

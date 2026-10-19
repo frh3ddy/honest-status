@@ -17,6 +17,13 @@ review, but only your merge makes a task Done, and git proves it.
   `feat(<task-id>): <title>` and `Approved-by: human`, after checking the task is In Review with a
   summary and the checks pass, then sets it Done. If anything fails, main is left as it was. Claude
   can't run it on its own; you type it.
+- An optional test-only merge policy for an approver agent, off by default. List test globs, one
+  per line, in `.honest-status/test-only` on main (like `test/**/*.test.ts`). Then
+  `node bin/truth.ts --merge <task-id> --policy test-only` merges a task only if every changed file
+  is an added or edited test the policy lists (no deletions, renames, snapshots, test config, new
+  `.skip` or `.only`) and the checks pass. It commits with `Approved-by: policy:test-only`, and the
+  board re-checks every such commit. The skip and deletion checks read the diff line by line, so
+  they can be fooled.
 
 Install, from a repo that uses Backlog.md with the statuses
 `To Do, In Progress, Blocked, In Review, Done`:
@@ -30,10 +37,6 @@ Or try a local checkout: `claude --plugin-dir /path/to/honest-status`.
 Options (plugin settings, all optional): `human`, who tasks waiting on you are assigned to (unset:
 any assignee counts); `main`, the branch whose commits prove Done (unset: `main`); and `checks`, a
 command the merge runs on the merged result, like `npm test` (unset: no checks).
-
-## Planned
-
-- An optional, written test-only merge policy for an approver agent. Empty by default.
 
 ## Requirements
 
