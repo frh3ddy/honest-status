@@ -3,6 +3,7 @@
   "name": "honest-status",
   "version": "0.1.0",
   "description": "Truth rules on top of Backlog.md: agents move work forward, only a merge makes a task Done.",
+  "license": "MIT",
   "author": {
     "name": "frh3ddy"
   },

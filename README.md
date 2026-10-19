@@ -18,8 +18,14 @@ review, but only your merge makes a task Done, and git proves it.
   summary and the checks pass, then sets it Done. If anything fails, main is left as it was. Claude
   can't run it on its own; you type it.
 
-Try it locally: `claude --plugin-dir /path/to/honest-status` from a repo that uses Backlog.md with
-the statuses `To Do, In Progress, Blocked, In Review, Done`.
+Install, from a repo that uses Backlog.md with the statuses
+`To Do, In Progress, Blocked, In Review, Done`:
+
+```
+/plugin install honest-status --marketplace frh3ddy/honest-status
+```
+
+Or try a local checkout: `claude --plugin-dir /path/to/honest-status`.
 
 Options (plugin settings, all optional): `human`, who tasks waiting on you are assigned to (unset:
 any assignee counts); `main`, the branch whose commits prove Done (unset: `main`); and `checks`, a
@@ -40,4 +46,4 @@ honest path the easy one and make drift visible, not to stop a determined agent.
 
 ## License
 
-To be decided before the first release.
+MIT. See [LICENSE](LICENSE).

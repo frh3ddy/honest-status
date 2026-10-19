@@ -1,0 +1,16 @@
+{
+  "name": "honest-status",
+  "owner": {
+    "name": "frh3ddy"
+  },
+  "metadata": {
+    "description": "honest-status: keep Backlog.md task status honest, with git as proof of Done."
+  },
+  "plugins": [
+    {
+      "name": "honest-status",
+      "source": "./",
+      "description": "Truth rules on top of Backlog.md: agents move work forward, only a merge makes a task Done."
+    }
+  ]
+}
