@@ -74,4 +74,4 @@ notes, comments. Checking "In Review needs a final summary" needs `task view` pe
 - Statuses are free strings from config. The checker compares against the plugin's own names
   (`"Done"`, `"In Review"`, `"Blocked"`, `"In Progress"`, `"To Do"`), exact case.
 - Assignee match accepts both `@fredy` and `fredy`, case-insensitive. The human's name is the
-  `--human` option (or `HONEST_STATUS_HUMAN`); unset, any assignee counts.
+  `--human` option (as a plugin: the `human` userConfig option); unset, any assignee counts.

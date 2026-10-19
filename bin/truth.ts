@@ -5,10 +5,10 @@
 //   node bin/truth.ts [dir] --json   the same data as JSON, for tools (always exits 0)
 //   node bin/truth.ts --hook         Claude Code Stop hook
 //
-// Options (flag or environment variable, both optional):
-//   --human <name>   HONEST_STATUS_HUMAN   who "waiting on the human" means, like @fredy.
-//                                          Unset: any assignee counts.
-//   --main <branch>  HONEST_STATUS_MAIN    the branch whose commits prove Done (default: main)
+// Options, all optional. As a plugin, they come from its userConfig (`human`, `main`), which
+// Claude Code passes to hooks as CLAUDE_PLUGIN_OPTION_HUMAN and CLAUDE_PLUGIN_OPTION_MAIN.
+//   --human <name>   who "waiting on the human" means, like @fredy. Unset: any assignee counts.
+//   --main <branch>  the branch whose commits prove Done (default: main)
 //
 // Only node: built-ins and erasable TypeScript, so Node ≥ 22.18 runs it directly.
 // Field names come from docs/backlog-json.md.
@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const SCHEMA_VERSION = 1;
+const STATUSES = ['To Do', 'In Progress', 'Blocked', 'In Review', 'Done'];
 
 interface ListTask {
   id: string;
@@ -97,6 +98,16 @@ function buildReport(root: string, opts: Options): Report {
     .filter((t) => !t.archived)
     .sort((a, b) => (a.ordinal ?? Infinity) - (b.ordinal ?? Infinity) || idNumber(a.id) - idNumber(b.id));
 
+  // The rules need these statuses; Backlog.md's defaults have no Blocked or In Review.
+  const configured = (run('backlog', ['config', 'get', 'statuses'], root) ?? '').split(',').map((x) => x.trim());
+  const missing = STATUSES.filter((x) => !configured.includes(x));
+  if (missing.length > 0) {
+    errors.push({
+      task: '-',
+      message: `Backlog.md has no ${missing.map((x) => `"${x}"`).join(', ')} status; set statuses: [${STATUSES.map((x) => `"${x}"`).join(', ')}] in the Backlog.md config file`,
+    });
+  }
+
   const hasMain = run('git', ['rev-parse', '--verify', '--quiet', `${opts.mainBranch}^{commit}`], root) !== null;
   const mainSubjects = hasMain
     ? (run('git', ['log', opts.mainBranch, '--format=%s'], root) ?? '').toLowerCase().split('\n')
@@ -119,7 +130,7 @@ function buildReport(root: string, opts: Options): Report {
       if (mainSubjects && !merged(t.id)) {
         errors.push({
           task: t.id,
-          message: `is Done, but no commit with "(${t.id})" is on ${opts.mainBranch}; only a merge makes a task Done. Move it back to In Review.`,
+          message: `is Done, but no commit with "(${t.id})" is on ${opts.mainBranch}; only a merge makes a task Done. Move it back: \`backlog task edit ${t.id} -s "In Review"\`.`,
         });
       }
       continue;
@@ -232,7 +243,8 @@ function runHook(opts: Options): void {
       reason: [
         'Task status breaks the truth rules. Fix these before you finish:',
         list,
-        'Run `node bin/truth.ts` from the honest-status plugin to see the whole board.',
+        'Change tasks with `backlog task edit`, not by editing their files; the truth-rules skill has the rules.',
+        `Run \`node ${process.argv[1]}\` to see the whole board.`,
       ].join('\n'),
     }),
   );
@@ -247,8 +259,8 @@ function option(args: string[], flag: string, env: string): string | null {
 function main(): void {
   const args = process.argv.slice(2);
   const opts: Options = {
-    human: option(args, '--human', 'HONEST_STATUS_HUMAN'),
-    mainBranch: option(args, '--main', 'HONEST_STATUS_MAIN') ?? 'main',
+    human: option(args, '--human', 'CLAUDE_PLUGIN_OPTION_HUMAN'),
+    mainBranch: option(args, '--main', 'CLAUDE_PLUGIN_OPTION_MAIN') ?? 'main',
   };
   if (args.includes('--hook')) {
     runHook(opts);

@@ -6,10 +6,22 @@ review, but only your merge makes a task Done, and git proves it.
 
 **Status: early.** Built in the open; this repo tracks its own tasks with Backlog.md.
 
+## Works today
+
+- A board of what's waiting on you, in progress, next and built, read from Backlog.md and git:
+  `node bin/truth.ts` (`--json` for tools).
+- A Stop hook that sends Claude back once when task status breaks the rules, then lets it stop
+  with a warning so it can't loop.
+- A `truth-rules` skill: how Claude moves tasks.
+
+Try it locally: `claude --plugin-dir /path/to/honest-status` from a repo that uses Backlog.md with
+the statuses `To Do, In Progress, Blocked, In Review, Done`.
+
+Options (plugin settings, both optional): `human`, who tasks waiting on you are assigned to (unset:
+any assignee counts), and `main`, the branch whose commits prove Done (unset: `main`).
+
 ## Planned
 
-- A board of what's waiting on you, in progress, next and built, read from Backlog.md and git.
-- A Stop hook that sends Claude back when task status drifts from the rules.
 - `/honest-status:merge <task-id>`: the human approval that merges and marks a task Done.
 - An optional, written test-only merge policy for an approver agent. Empty by default.
 

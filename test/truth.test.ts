@@ -55,6 +55,17 @@ test('flags each broken rule, and only those', () => {
   assert.equal(r.waiting.length, 5);
 });
 
+test('flags missing statuses', () => {
+  sh('cp', ['backlog/config.yml', 'backlog/config.full']);
+  sh('sed', ['-i.bak', 's/^statuses: .*/statuses: ["To Do", "In Progress", "Done"]/', 'backlog/config.yml']);
+  try {
+    const r = JSON.parse(truth(['--json']).out);
+    assert.match(r.errors[0].message, /no "Blocked", "In Review" status/);
+  } finally {
+    sh('mv', ['backlog/config.full', 'backlog/config.yml']);
+  }
+});
+
 test('without --human, any assignee counts', () => {
   const r = JSON.parse(truth(['--json']).out);
   assert.ok(!r.errors.some((e: { task: string }) => e.task === 'TASK-5'));

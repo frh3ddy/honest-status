@@ -1,0 +1,23 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "honest-status",
+  "version": "0.1.0",
+  "description": "Truth rules on top of Backlog.md: agents move work forward, only a merge makes a task Done.",
+  "author": {
+    "name": "frh3ddy"
+  },
+  "userConfig": {
+    "human": {
+      "type": "string",
+      "title": "Human",
+      "description": "Who \"waiting on the human\" means, like @fredy. Empty: any assignee counts.",
+      "sensitive": false
+    },
+    "main": {
+      "type": "string",
+      "title": "Main branch",
+      "description": "The branch whose commits prove Done. Empty: main.",
+      "sensitive": false
+    }
+  }
+}
