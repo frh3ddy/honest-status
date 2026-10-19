@@ -1,0 +1,273 @@
+#!/usr/bin/env node
+// bin/truth.ts: the board for a Backlog.md project, and the check that keeps its status honest.
+//
+//   node bin/truth.ts [dir]          print the board; exit 1 if a rule is broken
+//   node bin/truth.ts [dir] --json   the same data as JSON, for tools (always exits 0)
+//   node bin/truth.ts --hook         Claude Code Stop hook
+//
+// Options (flag or environment variable, both optional):
+//   --human <name>   HONEST_STATUS_HUMAN   who "waiting on the human" means, like @fredy.
+//                                          Unset: any assignee counts.
+//   --main <branch>  HONEST_STATUS_MAIN    the branch whose commits prove Done (default: main)
+//
+// Only node: built-ins and erasable TypeScript, so Node ≥ 22.18 runs it directly.
+// Field names come from docs/backlog-json.md.
+
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+const SCHEMA_VERSION = 1;
+
+interface ListTask {
+  id: string;
+  title: string;
+  status: string;
+  archived: boolean;
+  assignees: string[];
+  labels: string[];
+  ordinal: number | null;
+  isReady: boolean;
+}
+
+interface Problem {
+  task: string;
+  message: string;
+}
+
+interface Entry {
+  id: string;
+  title: string;
+  why: 'review' | 'blocked' | 'question';
+}
+
+interface Report {
+  root: string;
+  generatedAt: string;
+  human: string | null;
+  mainBranch: string;
+  waiting: Entry[];
+  inProgress: string[];
+  next: { id: string; title: string } | null;
+  built: string[];
+  errors: Problem[];
+  warnings: Problem[];
+}
+
+interface Options {
+  human: string | null;
+  mainBranch: string;
+}
+
+function run(cmd: string, args: string[], cwd: string): string | null {
+  try {
+    return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch {
+    return null;
+  }
+}
+
+// Backlog.md finds its own project root from any folder inside it; null means "not a project".
+function backlogJson(cwd: string, args: string[], kind: string): Record<string, unknown> {
+  const out = run('backlog', [...args, '--json'], cwd);
+  if (out === null) throw new Error(`\`backlog ${args.join(' ')} --json\` failed`);
+  const data = JSON.parse(out) as Record<string, unknown>;
+  if (data.schemaVersion !== SCHEMA_VERSION || data.kind !== kind) {
+    throw new Error(
+      `backlog returned schemaVersion ${String(data.schemaVersion)}, kind ${String(data.kind)}; ` +
+        `this checker knows schemaVersion ${SCHEMA_VERSION}. Re-check docs/backlog-json.md.`,
+    );
+  }
+  return data;
+}
+
+function findRoot(start: string): string | null {
+  if (run('backlog', ['task', 'list', '--json', '--max-count', '1'], start) === null) return null;
+  return run('git', ['rev-parse', '--show-toplevel'], start)?.trim() ?? resolve(start);
+}
+
+const norm = (name: string): string => name.trim().replace(/^@/, '').toLowerCase();
+const idNumber = (id: string): number => Number(/\d+$/.exec(id)?.[0] ?? 0);
+
+function buildReport(root: string, opts: Options): Report {
+  const errors: Problem[] = [];
+  const warnings: Problem[] = [];
+
+  const tasks = (backlogJson(root, ['task', 'list'], 'task-list').tasks as ListTask[])
+    .filter((t) => !t.archived)
+    .sort((a, b) => (a.ordinal ?? Infinity) - (b.ordinal ?? Infinity) || idNumber(a.id) - idNumber(b.id));
+
+  const hasMain = run('git', ['rev-parse', '--verify', '--quiet', `${opts.mainBranch}^{commit}`], root) !== null;
+  const mainSubjects = hasMain
+    ? (run('git', ['log', opts.mainBranch, '--format=%s'], root) ?? '').toLowerCase().split('\n')
+    : null;
+  if (!mainSubjects) {
+    warnings.push({ task: '-', message: `no "${opts.mainBranch}" branch, so Done can't be checked against merges` });
+  }
+  const merged = (id: string): boolean => mainSubjects?.some((s) => s.includes(`(${id.toLowerCase()})`)) ?? false;
+
+  const human = opts.human ? norm(opts.human) : null;
+  const assignedToHuman = (t: ListTask): boolean =>
+    human ? t.assignees.some((a) => norm(a) === human) : t.assignees.length > 0;
+  const who = opts.human ?? 'the human';
+
+  const isQuestion = (t: ListTask): boolean => t.labels.some((l) => l.toLowerCase() === 'question');
+  const waiting: Entry[] = [];
+  for (const t of tasks) {
+
+    if (t.status === 'Done') {
+      if (mainSubjects && !merged(t.id)) {
+        errors.push({
+          task: t.id,
+          message: `is Done, but no commit with "(${t.id})" is on ${opts.mainBranch}; only a merge makes a task Done. Move it back to In Review.`,
+        });
+      }
+      continue;
+    }
+    if (merged(t.id)) {
+      warnings.push({ task: t.id, message: `${opts.mainBranch} has a commit with "(${t.id})": if it was merged, set it Done` });
+    }
+
+    if (t.status === 'In Review') {
+      // The list has no finalSummary; only `task view` does.
+      const view = backlogJson(root, ['task', 'view', t.id], 'task-view').task as { finalSummary: string | null };
+      const summary = view.finalSummary?.trim() ?? '';
+      if (summary === '') {
+        errors.push({ task: t.id, message: 'is In Review without a final summary: add one with --final-summary' });
+      } else if (!/how to review/i.test(summary)) {
+        errors.push({ task: t.id, message: 'is In Review, but its final summary has no "How to review:" part' });
+      }
+    }
+
+    const why = t.status === 'In Review' ? 'review' : t.status === 'Blocked' ? 'blocked' : isQuestion(t) ? 'question' : null;
+    if (why) {
+      waiting.push({ id: t.id, title: t.title, why });
+      if (!assignedToHuman(t)) {
+        const what = why === 'question' ? 'is labeled question' : `is ${t.status}`;
+        errors.push({ task: t.id, message: `${what}, so it must be assigned to ${who}` });
+      }
+    }
+  }
+
+  const inProgress = tasks.filter((t) => t.status === 'In Progress');
+  if (inProgress.length > 1) {
+    warnings.push({
+      task: inProgress.map((t) => t.id).join(', '),
+      message: `${inProgress.length} tasks are In Progress; one per session is the rhythm`,
+    });
+  }
+  const next = tasks.find((t) => t.status === 'To Do' && t.isReady && !isQuestion(t)) ?? null;
+
+  return {
+    root,
+    generatedAt: new Date().toISOString(),
+    human: opts.human,
+    mainBranch: opts.mainBranch,
+    waiting,
+    inProgress: inProgress.map((t) => t.id),
+    next: next ? { id: next.id, title: next.title } : null,
+    built: tasks.filter((t) => t.status === 'Done' && merged(t.id)).map((t) => t.id),
+    errors,
+    warnings,
+  };
+}
+
+function printBoard(r: Report): void {
+  const out: string[] = [];
+  out.push(`Waiting on you (${r.waiting.length})`);
+  if (r.waiting.length === 0) out.push('  nothing');
+  for (const w of r.waiting) out.push(`  ${w.why.padEnd(8)}  ${w.id} · ${w.title}`);
+  out.push('', 'In progress', ...(r.inProgress.length ? r.inProgress.map((id) => `  ${id}`) : ['  nothing']));
+  out.push('', 'Next', r.next ? `  ${r.next.id} · ${r.next.title}` : '  nothing ready');
+  out.push('', `Built (${r.built.length})`, ...(r.built.length ? r.built.map((id) => `  ${id}`) : ['  nothing yet']));
+  out.push('');
+  out.push(
+    r.errors.length + r.warnings.length === 0
+      ? 'Truth rules: OK'
+      : `Truth rules: ${r.errors.length} errors, ${r.warnings.length} warnings`,
+  );
+  for (const e of r.errors) out.push(`  ✗ ${e.task} ${e.message}`);
+  for (const w of r.warnings) out.push(`  ! ${w.task} ${w.message}`);
+  console.log(out.join('\n'));
+}
+
+function readHookInput(): { cwd: string | null; stopHookActive: boolean } {
+  try {
+    const data: unknown = JSON.parse(readFileSync(0, 'utf8') || '{}');
+    if (data !== null && typeof data === 'object') {
+      const o = data as Record<string, unknown>;
+      return { cwd: typeof o.cwd === 'string' ? o.cwd : null, stopHookActive: o.stop_hook_active === true };
+    }
+  } catch {
+    // No input, or not JSON: check the project anyway.
+  }
+  return { cwd: null, stopHookActive: false };
+}
+
+// Stop hook: when a rule is broken, keep Claude working with the list of problems.
+// Exit 0 with a JSON decision on stdout, so stray stderr output never changes the outcome.
+function runHook(opts: Options): void {
+  const input = readHookInput();
+  const root = findRoot(input.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd());
+  if (!root) return; // not a Backlog.md project (or no backlog CLI): nothing to check
+
+  let report: Report;
+  try {
+    report = buildReport(root, opts);
+  } catch (e) {
+    console.log(JSON.stringify({ systemMessage: `honest-status couldn't check the board: ${(e as Error).message}` }));
+    return;
+  }
+  if (report.errors.length === 0) return;
+
+  const list = report.errors.map((e) => `- ${e.task} ${e.message}`).join('\n');
+  if (input.stopHookActive) {
+    // Already sent back once this turn; don't loop. Tell the human instead.
+    console.log(JSON.stringify({ systemMessage: `Task status still breaks the truth rules:\n${list}` }));
+    return;
+  }
+  console.log(
+    JSON.stringify({
+      decision: 'block',
+      reason: [
+        'Task status breaks the truth rules. Fix these before you finish:',
+        list,
+        'Run `node bin/truth.ts` from the honest-status plugin to see the whole board.',
+      ].join('\n'),
+    }),
+  );
+}
+
+function option(args: string[], flag: string, env: string): string | null {
+  const i = args.indexOf(flag);
+  const value = i >= 0 ? args[i + 1] : process.env[env];
+  return value && !value.startsWith('--') ? value : null;
+}
+
+function main(): void {
+  const args = process.argv.slice(2);
+  const opts: Options = {
+    human: option(args, '--human', 'HONEST_STATUS_HUMAN'),
+    mainBranch: option(args, '--main', 'HONEST_STATUS_MAIN') ?? 'main',
+  };
+  if (args.includes('--hook')) {
+    runHook(opts);
+    return;
+  }
+  const start = args.find((a, i) => !a.startsWith('--') && !['--human', '--main'].includes(args[i - 1] ?? '')) ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+  const root = findRoot(start);
+  if (!root) {
+    console.error(`No Backlog.md project at ${resolve(start)} (or the backlog CLI isn't installed).`);
+    process.exitCode = 1;
+    return;
+  }
+  const report = buildReport(root, opts);
+  if (args.includes('--json')) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+  printBoard(report);
+  if (report.errors.length > 0) process.exitCode = 1;
+}
+
+main();

@@ -69,9 +69,9 @@ notes, comments. Checking "In Review needs a final summary" needs `task view` pe
 
 ## For `bin/truth.ts`
 
-- There is no separate "how to review" field: the final summary must carry it (e.g. a
-  `How to review:` line). Decide in TASK-2 whether the checker looks for that line.
-- Statuses are free strings from config, so read `statuses` from `backlog/config.yml` (or
-  just compare against `"Done"`, `"In Review"`, `"Blocked"`) instead of hardcoding a list.
-- Assignee match should accept both `@fredy` and `fredy`; the human's name is an option, not
-  hardcoded.
+- There is no separate "how to review" field: the final summary must carry it. The checker
+  requires the words "How to review" in the final summary of every In Review task.
+- Statuses are free strings from config. The checker compares against the plugin's own names
+  (`"Done"`, `"In Review"`, `"Blocked"`, `"In Progress"`, `"To Do"`), exact case.
+- Assignee match accepts both `@fredy` and `fredy`, case-insensitive. The human's name is the
+  `--human` option (or `HONEST_STATUS_HUMAN`); unset, any assignee counts.

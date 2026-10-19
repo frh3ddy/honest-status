@@ -30,5 +30,5 @@ before starting. `reference/check.ts` is the checker this plugin grows from: por
 ## Commands
 
 - `backlog board`, `backlog task list --json`
-- `node bin/truth.ts` (once it exists, build step 2)
+- `node bin/truth.ts --human @fredy` (board), `node --test test/truth.test.ts` (needs `backlog` on PATH)
 - `claude --plugin-dir .` (to load the plugin locally, build step 3)
