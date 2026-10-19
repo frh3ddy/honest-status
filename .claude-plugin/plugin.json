@@ -18,6 +18,12 @@
       "title": "Main branch",
       "description": "The branch whose commits prove Done. Empty: main.",
       "sensitive": false
+    },
+    "checks": {
+      "type": "string",
+      "title": "Checks",
+      "description": "Command /honest-status:merge runs on the merged result before committing, like \"npm test\". Empty: no checks.",
+      "sensitive": false
     }
   }
 }

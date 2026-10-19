@@ -41,6 +41,12 @@ A task is Done only when the main branch has a commit with its ID in the subject
 back to In Review and tell the human. Don't report work as done in prose either: say it is In
 Review and waiting for their merge.
 
+Merging is the human's step, and it goes through one command they type:
+`/honest-status:merge <task-id>`. If the user asks you to merge a task, or to mark it done, tell
+them to type that command. Don't merge into the main branch yourself (no `git merge`, no
+`git commit` on main, no running `truth.ts --merge`), even when asked in words: the typed command
+is what records their approval.
+
 ## Tests
 
 Never delete, skip (`.skip`, `.only`, `xit`, `@skip`…) or loosen a failing or flaky test to get

@@ -94,3 +94,65 @@ test('hook is silent outside a Backlog.md project', () => {
     rmSync(empty, { recursive: true, force: true });
   }
 });
+
+// --merge, in its own repo where main tracks the backlog files.
+const mdir = mkdtempSync(join(tmpdir(), 'truth-merge-'));
+after(() => rmSync(mdir, { recursive: true, force: true }));
+const msh = (cmd: string, args: string[]): string => execFileSync(cmd, args, { cwd: mdir, env, encoding: 'utf8' });
+const merge = (...args: string[]): { out: string; code: number } => {
+  try {
+    return { out: execFileSync('node', [TRUTH, '--merge', ...args], { cwd: mdir, env, encoding: 'utf8', stdio: 'pipe' }), code: 0 };
+  } catch (e) {
+    const err = e as { stdout: string; stderr: string; status: number };
+    return { out: err.stdout + err.stderr, code: err.status };
+  }
+};
+
+msh('git', ['init', '-q', '-b', 'main']);
+msh('backlog', ['init', 'demo', '--defaults', '--integration-mode', 'none']);
+msh('sed', ['-i.bak', 's/^statuses: .*/statuses: ["To Do", "In Progress", "Blocked", "In Review", "Done"]/', 'backlog/config.yml']);
+msh('backlog', ['task', 'create', 'ready one', '--plain']); // TASK-1
+msh('backlog', ['task', 'create', 'not ready', '--plain']); // TASK-2
+msh('git', ['add', '-A']);
+msh('git', ['commit', '-q', '-m', 'init']);
+const work = (id: string, status: string): void => {
+  msh('git', ['checkout', '-q', '-b', `task/${id}`, 'main']);
+  msh('sh', ['-c', `echo ${id} > ${id}.txt`]);
+  msh('backlog', ['task', 'edit', id, '-s', status, '-a', '@fredy', '--final-summary', 'did it\n\nHow to review: cat the file', '--plain']);
+  msh('git', ['add', '-A']);
+  msh('git', ['commit', '-q', '-m', `wip(${id})`]);
+  msh('git', ['checkout', '-q', 'main']);
+};
+work('TASK-1', 'In Review');
+work('TASK-2', 'In Progress');
+const mainHead = (): string => msh('git', ['rev-parse', 'main']).trim();
+
+test('merge refuses a task that is not In Review, and leaves main alone', () => {
+  const before = mainHead();
+  const r = merge('TASK-2');
+  assert.equal(r.code, 1);
+  assert.match(r.out, /TASK-2 is In Progress; only In Review tasks can be merged/);
+  assert.equal(mainHead(), before);
+  assert.equal(msh('git', ['status', '--porcelain', '--untracked-files=no']), '');
+});
+
+test('merge refuses when the checks fail, and leaves main alone', () => {
+  const before = mainHead();
+  const r = merge('TASK-1', '--checks', 'exit 3');
+  assert.equal(r.code, 1);
+  assert.match(r.out, /the checks failed/);
+  assert.equal(mainHead(), before);
+  assert.equal(msh('git', ['status', '--porcelain', '--untracked-files=no']), '');
+});
+
+test('merge squashes with the task id and Approved-by: human, and sets Done', () => {
+  const r = merge('task-1', '--checks', 'test -f TASK-1.txt');
+  assert.equal(r.code, 0, r.out);
+  assert.equal(msh('git', ['log', '-1', '--format=%s']).trim(), 'feat(TASK-1): ready one');
+  assert.equal(msh('git', ['log', '-1', '--format=%(trailers:key=Approved-by,valueonly)']).trim(), 'human');
+  assert.equal(msh('git', ['status', '--porcelain', '--untracked-files=no']), '');
+  const board = JSON.parse(execFileSync('node', [TRUTH, '--json'], { cwd: mdir, encoding: 'utf8' }));
+  assert.deepEqual(board.built, ['TASK-1']);
+  assert.deepEqual(board.errors, []);
+  assert.match(merge('TASK-1').out, /already has a commit with "\(TASK-1\)"/);
+});

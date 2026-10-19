@@ -4,16 +4,19 @@
 //   node bin/truth.ts [dir]          print the board; exit 1 if a rule is broken
 //   node bin/truth.ts [dir] --json   the same data as JSON, for tools (always exits 0)
 //   node bin/truth.ts --hook         Claude Code Stop hook
+//   node bin/truth.ts --merge <id>   the human's approval: squash-merge the task's branch, set Done
 //
 // Options, all optional. As a plugin, they come from its userConfig (`human`, `main`), which
 // Claude Code passes to hooks as CLAUDE_PLUGIN_OPTION_HUMAN and CLAUDE_PLUGIN_OPTION_MAIN.
 //   --human <name>   who "waiting on the human" means, like @fredy. Unset: any assignee counts.
 //   --main <branch>  the branch whose commits prove Done (default: main)
+//   --checks <cmd>   --merge only: run on the merged result, like "npm test" (default: none)
+//   --branch <name>  --merge only: the task's branch (default: the one branch named with its id)
 //
 // Only node: built-ins and erasable TypeScript, so Node ≥ 22.18 runs it directly.
 // Field names come from docs/backlog-json.md.
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -202,6 +205,83 @@ function printBoard(r: Report): void {
   console.log(out.join('\n'));
 }
 
+// The human typed /honest-status:merge: squash the task's branch into main, check the merged
+// result, set Done and commit with the task id and `Approved-by: human`. On any failure, main is
+// put back as it was. Returns the exit code.
+function merge(root: string, id: string, opts: Options, branchArg: string | null, checks: string | null): number {
+  const fail = (message: string): number => {
+    console.error(`Not merged: ${message}`);
+    return 1;
+  };
+  const git = (...args: string[]): string | null => run('git', args, root);
+  id = id.toUpperCase();
+
+  if ((git('status', '--porcelain', '--untracked-files=no') ?? 'x').trim() !== '') {
+    return fail('the working tree has uncommitted changes; commit or stash them first');
+  }
+  if (git('rev-parse', '--verify', '--quiet', `${opts.mainBranch}^{commit}`) === null) {
+    return fail(`there is no "${opts.mainBranch}" branch`);
+  }
+  const subjects = (git('log', opts.mainBranch, '--format=%s') ?? '').toLowerCase();
+  if (subjects.includes(`(${id.toLowerCase()})`)) return fail(`${opts.mainBranch} already has a commit with "(${id})"`);
+
+  let branch = branchArg;
+  if (!branch) {
+    const named = new RegExp(`(^|[^a-z0-9])${id.toLowerCase()}($|[^0-9])`);
+    const found = (git('branch', '--list', '--format=%(refname:short)') ?? '')
+      .split('\n')
+      .filter((b) => b && b !== opts.mainBranch && named.test(b.toLowerCase()));
+    if (found.length !== 1) {
+      return fail(
+        found.length === 0
+          ? `no branch has ${id} in its name; pass the branch: --merge ${id} --branch <name>`
+          : `several branches name ${id} (${found.join(', ')}); pass one with --branch`,
+      );
+    }
+    branch = found[0] ?? '';
+  }
+  if (git('rev-parse', '--verify', '--quiet', `${branch}^{commit}`) === null) return fail(`no branch "${branch}"`);
+
+  const start = git('rev-parse', '--abbrev-ref', 'HEAD')?.trim() ?? opts.mainBranch;
+  if (git('checkout', '--quiet', opts.mainBranch) === null) return fail(`couldn't check out ${opts.mainBranch}`);
+  const undo = (message: string): number => {
+    git('reset', '--quiet', '--hard'); // safe: the tree was clean before we started
+    if (start !== opts.mainBranch) git('checkout', '--quiet', start);
+    return fail(`${message}. ${opts.mainBranch} is unchanged.`);
+  };
+
+  if (git('merge', '--squash', '--quiet', branch) === null) return undo(`${branch} doesn't merge cleanly into ${opts.mainBranch}`);
+
+  // Judge the task as it stands on the merged result, with the same rules as the board.
+  let task: { title: string; status: string; path: string };
+  let problems: Problem[];
+  try {
+    task = backlogJson(root, ['task', 'view', id], 'task-view').task as typeof task;
+    problems = buildReport(root, opts).errors.filter((e) => e.task === id || e.task === '-');
+  } catch (e) {
+    return undo((e as Error).message);
+  }
+  if (task.status !== 'In Review') return undo(`${id} is ${task.status}; only In Review tasks can be merged`);
+  if (problems.length > 0) return undo(problems.map((p) => `${p.task} ${p.message}`).join('; '));
+
+  if (checks) {
+    console.log(`Running checks: ${checks}`);
+    // ponytail: one shell command string; a list of commands if projects need several
+    if (spawnSync('sh', ['-c', checks], { cwd: root, stdio: 'inherit' }).status !== 0) return undo('the checks failed');
+  } else {
+    console.log('No checks configured (the plugin\'s `checks` option); merging without running any.');
+  }
+
+  if (run('backlog', ['task', 'edit', id, '-s', 'Done', '--plain'], root) === null) return undo(`couldn't set ${id} to Done`);
+  git('add', '--', task.path);
+  if (git('commit', '--quiet', '-m', `feat(${id}): ${task.title}`, '--trailer', 'Approved-by: human') === null) {
+    return undo("git commit failed (a commit hook may have refused it)");
+  }
+  console.log(`Merged ${branch} into ${opts.mainBranch} as "feat(${id}): ${task.title}" and set ${id} Done.`);
+  console.log(`The branch ${branch} is kept; delete it with: git branch -D ${branch}`);
+  return 0;
+}
+
 function readHookInput(): { cwd: string | null; stopHookActive: boolean } {
   try {
     const data: unknown = JSON.parse(readFileSync(0, 'utf8') || '{}');
@@ -253,7 +333,8 @@ function runHook(opts: Options): void {
 function option(args: string[], flag: string, env: string): string | null {
   const i = args.indexOf(flag);
   const value = i >= 0 ? args[i + 1] : process.env[env];
-  return value && !value.startsWith('--') ? value : null;
+  // A literal "${user_config.x}" means Claude Code didn't fill the option in (it doesn't under --plugin-dir).
+  return value && !value.startsWith('--') && !value.startsWith('${') ? value : null;
 }
 
 function main(): void {
@@ -266,11 +347,20 @@ function main(): void {
     runHook(opts);
     return;
   }
-  const start = args.find((a, i) => !a.startsWith('--') && !['--human', '--main'].includes(args[i - 1] ?? '')) ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+  const valued = ['--human', '--main', '--merge', '--branch', '--checks'];
+  const start = args.find((a, i) => !a.startsWith('--') && !valued.includes(args[i - 1] ?? '')) ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
   const root = findRoot(start);
   if (!root) {
     console.error(`No Backlog.md project at ${resolve(start)} (or the backlog CLI isn't installed).`);
     process.exitCode = 1;
+    return;
+  }
+  const mergeId = option(args, '--merge', '');
+  if (args.includes('--merge')) {
+    process.exitCode = mergeId
+      ? merge(root, mergeId, opts, option(args, '--branch', ''), option(args, '--checks', 'CLAUDE_PLUGIN_OPTION_CHECKS'))
+      : 1;
+    if (!mergeId) console.error('Usage: node bin/truth.ts --merge <task-id> [--branch <name>] [--checks <cmd>]');
     return;
   }
   const report = buildReport(root, opts);
