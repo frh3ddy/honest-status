@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@fredy'
 created_date: '2026-10-20 21:24'
-updated_date: '2026-10-20 21:29'
+updated_date: '2026-10-20 21:30'
 labels: []
 dependencies: []
 ordinal: 14000
@@ -20,9 +20,15 @@ plugin.json is still 0.1.0, as installed. Since then main gained the adoption ba
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 plugin.json version is 0.2.0 and claude plugin validate passes
-- [ ] #2 An installed 0.1.0 copy updates to 0.2.0, verified in a throwaway config
+- [x] #2 An installed 0.1.0 copy updates to 0.2.0, verified in a throwaway config
 - [x] #3 README or the task summary says how users get updates, and whether the version must change
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+AC 2 verified after merge (2026-10-20): Fredy's local-scope install updated with claude plugin update: "updated from 0.1.0 to 0.2.0"; the 0.2.0 copy has doneAtBaseline.
+<!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
