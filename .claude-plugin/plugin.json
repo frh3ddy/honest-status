@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "honest-status",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Truth rules on top of Backlog.md: agents move work forward, only a merge makes a task Done.",
   "license": "MIT",
   "author": {

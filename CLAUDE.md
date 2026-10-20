@@ -26,6 +26,8 @@ guard, zero dependencies); keep them when you change it.
   parameter properties), so Node 22.18+ runs it directly with no build step.
 - Zero config by default. Anything project-specific becomes an option, never a hardcoded name.
 - The README stays honest: guardrails, not security.
+- Bump `version` in `.claude-plugin/plugin.json` in any task that changes what users get:
+  installed copies don't update while the version stays the same.
 
 ## Commands
 

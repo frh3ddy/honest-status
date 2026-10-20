@@ -38,6 +38,15 @@ Install, from a repo that uses Backlog.md with the statuses
 
 Or try a local checkout: `claude --plugin-dir /path/to/honest-status`.
 
+To update, refresh the marketplace, then the plugin, and restart Claude Code:
+
+```sh
+claude plugin marketplace update honest-status
+claude plugin update honest-status@honest-status
+```
+
+An installed copy only updates when the version in `.claude-plugin/plugin.json` changes.
+
 Adopting a project that already has Done tasks? They have no merge commits, so the board would
 flag every one. Commit the board as it is and tag it first; tasks Done at the tag count as built:
 
