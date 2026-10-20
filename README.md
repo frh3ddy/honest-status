@@ -21,6 +21,10 @@ test-only policy.
   `feat(<task-id>): <title>` and `Approved-by: human`, after checking the task is In Review with a
   summary and the checks pass, then sets it Done. If anything fails, main is left as it was. Claude
   can't run it on its own; you type it.
+- `/honest-status:merge board/<name>`: your approval of board-only changes, like new tasks or
+  notes made outside a task. Squashes the branch as `chore(board): <name>` with
+  `Approved-by: human`, and refuses it if it touches anything but task files, deletes a task,
+  makes a task Done or breaks a rule.
 - An optional test-only merge policy for an approver agent, off by default. List test globs, one
   per line, in `.honest-status/test-only` on main (like `test/**/*.test.ts`). Then
   `node bin/truth.ts --merge <task-id> --policy test-only` merges a task only if every changed file

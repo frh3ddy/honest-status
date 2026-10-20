@@ -17,6 +17,7 @@ broken.
 | You can't continue without the human | `-s Blocked`, assign it to the human, and say exactly what you need in a comment. |
 | You have a question that doesn't stop the work | Make a task labeled `question`, assigned to the human, and keep going on a stated default. |
 | The work is ready | Write the final summary, move it to `In Review`, assign it to the human. |
+| You change only the board, outside a task (file tasks, add notes, tick a criterion) | Commit it on a `board/<name>` branch, never on main, and ask the human to type `/honest-status:merge board/<name>`. |
 | Never | Set a task to `Done`. |
 
 The human is the plugin's `human` option (`${user_config.human}`). If that is empty, use the

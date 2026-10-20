@@ -8,6 +8,9 @@
 //   node bin/truth.ts --merge <id> --policy test-only
 //                                    an approver agent's merge, allowed only for test-only changes
 //                                    that the project's written policy covers (see POLICY_FILE)
+//   node bin/truth.ts --merge board/<name>
+//                                    the human's approval of board-only changes (new tasks, notes);
+//                                    makes nothing Done
 //
 // Options, all optional. As a plugin, they come from its userConfig (`human`, `main`), which
 // Claude Code passes to hooks as CLAUDE_PLUGIN_OPTION_HUMAN and CLAUDE_PLUGIN_OPTION_MAIN.
@@ -100,14 +103,27 @@ function findRoot(start: string): string | null {
   return run('git', ['rev-parse', '--show-toplevel'], start)?.trim() ?? resolve(start);
 }
 
+const isTaskFile = (file: string): boolean => /(^|\/)tasks\/[^/]+\.md$/.test(file);
+
+// A task file's id and whether it is Done, read from its frontmatter as stored in git at `ref`
+// (`ref` of '' means the index). Null when git has no such file.
+function taskAt(root: string, ref: string, file: string): { id: string; done: boolean } | null {
+  const text = run('git', ['show', `${ref}:${file}`], root);
+  if (text === null) return null;
+  const front = text.split(/^---\s*$/m)[1] ?? '';
+  return {
+    id: /^id:\s*['"]?([^'"\n]+?)['"]?\s*$/m.exec(front)?.[1] ?? file,
+    done: /^status:\s*['"]?Done['"]?\s*$/m.test(front),
+  };
+}
+
 // Lowercased ids of the tasks whose files say `status: Done` at BASELINE_TAG.
 function doneAtBaseline(root: string): Set<string> {
   const ids = new Set<string>();
   const files = (run('git', ['ls-tree', '-r', '--name-only', BASELINE_TAG], root) ?? '').split('\n');
-  for (const file of files.filter((f) => /(^|\/)tasks\/[^/]+\.md$/.test(f))) {
-    const front = (run('git', ['show', `${BASELINE_TAG}:${file}`], root) ?? '').split(/^---\s*$/m)[1] ?? '';
-    const id = /^id:\s*['"]?([^'"\n]+?)['"]?\s*$/m.exec(front)?.[1];
-    if (id && /^status:\s*['"]?Done['"]?\s*$/m.test(front)) ids.add(id.toLowerCase());
+  for (const file of files.filter(isTaskFile)) {
+    const task = taskAt(root, BASELINE_TAG, file);
+    if (task?.done) ids.add(task.id.toLowerCase());
   }
   return ids;
 }
@@ -362,6 +378,68 @@ function merge(root: string, id: string, opts: Options, branchArg: string | null
   return 0;
 }
 
+// The human typed /honest-status:merge board/<name>: a branch with only board changes (new tasks,
+// notes, ticked criteria). Squash it as `chore(board): <name>` with `Approved-by: human`, only if
+// it touches nothing but task files, deletes none, makes no task Done and breaks no rule. On any
+// failure, main is put back as it was. Returns the exit code.
+function mergeBoard(root: string, branch: string, opts: Options): number {
+  const fail = (message: string): number => {
+    console.error(`Not merged: ${message}`);
+    return 1;
+  };
+  const git = (...args: string[]): string | null => run('git', args, root);
+
+  if ((git('status', '--porcelain', '--untracked-files=no') ?? 'x').trim() !== '') {
+    return fail('the working tree has uncommitted changes; commit or stash them first');
+  }
+  if (git('rev-parse', '--verify', '--quiet', `${opts.mainBranch}^{commit}`) === null) {
+    return fail(`there is no "${opts.mainBranch}" branch`);
+  }
+  if (git('rev-parse', '--verify', '--quiet', `${branch}^{commit}`) === null) return fail(`no branch "${branch}"`);
+  const subjects = (git('log', '--format=- %s', `${opts.mainBranch}..${branch}`) ?? '').trim();
+
+  const start = git('rev-parse', '--abbrev-ref', 'HEAD')?.trim() ?? opts.mainBranch;
+  if (git('checkout', '--quiet', opts.mainBranch) === null) return fail(`couldn't check out ${opts.mainBranch}`);
+  const undo = (message: string): number => {
+    git('reset', '--quiet', '--hard'); // safe: the tree was clean before we started
+    if (start !== opts.mainBranch) git('checkout', '--quiet', start);
+    return fail(`${message}. ${opts.mainBranch} is unchanged.`);
+  };
+  if (git('merge', '--squash', '--quiet', branch) === null) return undo(`${branch} doesn't merge cleanly into ${opts.mainBranch}`);
+
+  // Judge what the squash would actually change on main.
+  const problems: string[] = [];
+  const touched: string[] = [];
+  for (const line of (git('diff', '--cached', '--name-status', '--no-renames') ?? '').split('\n').filter(Boolean)) {
+    const [status = '', file = ''] = line.split('\t');
+    if (!isTaskFile(file)) problems.push(`${file} isn't a task file`);
+    else if (status === 'D') problems.push(`it deletes ${file}`);
+    else {
+      const after = taskAt(root, '', file);
+      if (after?.done && !taskAt(root, 'HEAD', file)?.done) problems.push(`it makes ${after.id} Done; only a task merge does that`);
+      if (after) touched.push(after.id);
+    }
+  }
+  if (problems.length === 0 && touched.length === 0) problems.push(`${branch} changes nothing on ${opts.mainBranch}`);
+  if (problems.length > 0) return undo(`not a board-only change: ${problems.join('; ')}`);
+
+  let broken: Problem[];
+  try {
+    broken = buildReport(root, opts).errors.filter((e) => touched.includes(e.task) || e.task === '-');
+  } catch (e) {
+    return undo((e as Error).message);
+  }
+  if (broken.length > 0) return undo(broken.map((p) => `${p.task} ${p.message}`).join('; '));
+
+  const subject = `chore(board): ${branch.replace(/^board\//, '')}`;
+  if (git('commit', '--quiet', '-m', subject, '-m', subjects || '-', '--trailer', 'Approved-by: human') === null) {
+    return undo('git commit failed (a commit hook may have refused it)');
+  }
+  console.log(`Merged ${branch} into ${opts.mainBranch} as "${subject}" (Approved-by: human); it changed ${touched.join(', ')}.`);
+  console.log(`The branch ${branch} is kept; delete it with: git branch -D ${branch}`);
+  return 0;
+}
+
 function readHookInput(): { cwd: string | null; stopHookActive: boolean } {
   try {
     const data: unknown = JSON.parse(readFileSync(0, 'utf8') || '{}');
@@ -436,13 +514,17 @@ function main(): void {
     return;
   }
   const mergeId = option(args, '--merge', '');
+  if (mergeId?.startsWith('board/')) {
+    process.exitCode = mergeBoard(root, mergeId, opts);
+    return;
+  }
   if (args.includes('--merge')) {
     const policy = option(args, '--policy', '');
     const ok = mergeId && (policy === null || policy === 'test-only');
     process.exitCode = ok
       ? merge(root, mergeId, opts, option(args, '--branch', ''), option(args, '--checks', 'CLAUDE_PLUGIN_OPTION_CHECKS'), policy !== null)
       : 1;
-    if (!ok) console.error('Usage: node bin/truth.ts --merge <task-id> [--branch <name>] [--checks <cmd>] [--policy test-only]');
+    if (!ok) console.error('Usage: node bin/truth.ts --merge <task-id> [--branch <name>] [--checks <cmd>] [--policy test-only] | --merge board/<name>');
     return;
   }
   const report = buildReport(root, opts);

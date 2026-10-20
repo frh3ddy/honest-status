@@ -1,8 +1,8 @@
 ---
 name: merge
-description: The human's approval of a Backlog.md task. Squash-merges the task's branch into main with its task ID and "Approved-by: human", runs the checks, and sets the task Done. Only the user runs this.
+description: The human's approval of a Backlog.md task. Squash-merges the task's branch into main with its task ID and "Approved-by: human", runs the checks, and sets the task Done. With board/<name>, merges board-only changes (new tasks, notes) and makes nothing Done. Only the user runs this.
 disable-model-invocation: true
-argument-hint: <task-id> [--branch <name>]
+argument-hint: <task-id> [--branch <name>] | board/<name>
 ---
 
 # Merge a task
@@ -20,6 +20,10 @@ The script does everything: it checks out main, squash-merges the task's branch,
 task is In Review with a final summary, runs the checks, sets the task Done and commits
 `feat(<task-id>): <title>` with the trailer `Approved-by: human`. If anything fails, it puts main
 back as it was.
+
+Given a `board/<name>` branch instead of a task ID, it merges board-only changes: it refuses
+anything but task files, deleted tasks, a task newly made Done, or a broken rule, and commits
+`chore(board): <name>` with `Approved-by: human`.
 
 Then report what it printed.
 

@@ -217,6 +217,45 @@ test('board re-verifies policy merges already on main', () => {
   assert.match(board.errors[0].message, /merged by the test-only policy .* src\.txt isn't a test file/);
 });
 
+const boardBranch = (name: string, change: () => void): void => {
+  msh('git', ['checkout', '-q', '-b', `board/${name}`, 'main']);
+  change();
+  msh('git', ['add', '-A']);
+  msh('git', ['commit', '-q', '-m', `board ${name}`]);
+  msh('git', ['checkout', '-q', 'main']);
+};
+const taskFile = (id: string): string => msh('sh', ['-c', `ls backlog/tasks/${id.toLowerCase()}\\ -*.md`]).trim();
+
+test('board merge refuses code, deleted tasks and new Done, and leaves main alone', () => {
+  boardBranch('code', () => write({ 'notes.txt': 'not a task\n' }));
+  boardBranch('delete', () => msh('git', ['rm', '-q', taskFile('TASK-2')]));
+  boardBranch('done', () => msh('backlog', ['task', 'edit', 'TASK-4', '-s', 'Done', '--plain']));
+  boardBranch('unassigned', () => msh('backlog', ['task', 'create', 'whose question?', '-l', 'question', '--plain']));
+  const before = mainHead();
+  assert.match(merge('board/code').out, /notes\.txt isn't a task file/);
+  assert.match(merge('board/delete').out, /it deletes .*task-2 - /);
+  assert.match(merge('board/done').out, /it makes TASK-4 Done; only a task merge does that/);
+  assert.match(merge('board/unassigned').out, /is labeled question, so it must be assigned/);
+  assert.match(merge('board/missing').out, /no branch "board\/missing"/);
+  assert.equal(mainHead(), before);
+  assert.equal(msh('git', ['status', '--porcelain', '--untracked-files=no']), '');
+});
+
+test('board merge squashes task-file changes as chore(board) with Approved-by: human', () => {
+  boardBranch('notes', () => {
+    msh('backlog', ['task', 'edit', 'TASK-1', '--append-notes', 'checked again after merge', '--plain']); // already Done
+    msh('backlog', ['task', 'create', 'an open question', '-l', 'question', '-a', '@fredy', '--plain']);
+  });
+  const r = merge('board/notes');
+  assert.equal(r.code, 0, r.out);
+  assert.equal(msh('git', ['log', '-1', '--format=%s']).trim(), 'chore(board): notes');
+  assert.equal(msh('git', ['log', '-1', '--format=%(trailers:key=Approved-by,valueonly)']).trim(), 'human');
+  const files = msh('git', ['show', '--name-only', '--format=', 'HEAD']).trim().split('\n');
+  assert.ok(files.every((f) => f.startsWith('backlog/tasks/')), files.join(', '));
+  const board = JSON.parse(execFileSync('node', [TRUTH, '--json'], { cwd: mdir, encoding: 'utf8' }));
+  assert.ok(board.built.includes('TASK-1'));
+});
+
 // Under --plugin-dir, Claude Code leaves ${user_config.x} in the merge skill's command as is.
 test('merge treats unfilled ${user_config} options as unset', () => {
   const r = merge('TASK-5', '--main', '${user_config.main}', '--checks', '${user_config.checks}');
