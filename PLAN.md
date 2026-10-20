@@ -89,4 +89,4 @@ honest-status/
 
 ## Open questions
 
-- Final name.
+None. The name stays honest-status (decided in TASK-11).
