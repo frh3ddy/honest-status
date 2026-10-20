@@ -6,6 +6,10 @@ review, but only your merge makes a task Done, and git proves it.
 
 **Status: early.** Built in the open; this repo tracks its own tasks with Backlog.md.
 
+See it in use: [honest-status-demo](https://github.com/frh3ddy/honest-status-demo), a tiny CLI
+whose git log shows one task merged by a human and one merged by an approver agent under the
+test-only policy.
+
 ## Works today
 
 - A board of what's waiting on you, in progress, next and built, read from Backlog.md and git:
