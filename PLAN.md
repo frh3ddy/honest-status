@@ -73,6 +73,8 @@ honest-status/
 7. A second, public project as the showcase.
 8. Adopting existing projects: a baseline (the git tag `honest-status-start`) before which Done
    tasks count as built without a merge commit, so a project with history isn't flagged on day one.
+9. Board-only changes: `/honest-status:merge board/<name>` squashes a branch that only touches task
+   files and makes no task Done, as `chore(board): …` with `Approved-by: human`.
 
 ## Later extras
 
