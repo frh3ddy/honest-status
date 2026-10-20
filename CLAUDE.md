@@ -1,8 +1,8 @@
 # Working on honest-status
 
 This repo builds a Claude Code plugin that adds truth rules on top of Backlog.md. Read `PLAN.md`
-before starting. `reference/check.ts` is the checker this plugin grows from: port its patterns
-(hook JSON decision, loop guard, zero dependencies), not its project-specific parts.
+before starting. `bin/truth.ts` keeps the patterns it was ported from (hook JSON decision, loop
+guard, zero dependencies); keep them when you change it.
 
 ## Every session
 

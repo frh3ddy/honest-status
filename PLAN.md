@@ -64,7 +64,7 @@ honest-status/
 
 1. Backlog.md in this repo: statuses, one task per step below, and the real JSON field names
    recorded in `docs/backlog-json.md`.
-2. Port `reference/check.ts` to read Backlog.md's JSON and git: `bin/truth.ts`.
+2. Port the earlier project-specific checker to read Backlog.md's JSON and git: `bin/truth.ts`.
 3. Stop hook and `truth-rules` skill; load locally with `claude --plugin-dir .`.
 4. `merge` skill. Test that it runs when typed: there are reports of Claude refusing skills with
    `disable-model-invocation: true` even when the user typed the command.
