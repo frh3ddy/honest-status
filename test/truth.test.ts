@@ -95,6 +95,25 @@ test('hook is silent outside a Backlog.md project', () => {
   }
 });
 
+test('tasks Done at the honest-status-start tag count as built; later ones still need a merge', () => {
+  sh('git', ['add', '-A']);
+  sh('git', ['commit', '-q', '-m', 'adopt honest-status']);
+  sh('git', ['tag', 'honest-status-start']);
+  backlog('task', 'edit', 'TASK-8', '-s', 'Done'); // Done after the tag, never merged
+  const doneErrors = (r: { errors: { task: string; message: string }[] }): string[] =>
+    r.errors.filter((e) => e.message.startsWith('is Done')).map((e) => e.task);
+  try {
+    const r = JSON.parse(truth(['--json', '--human', '@fredy']).out);
+    assert.deepEqual(r.built, ['TASK-1', 'TASK-2']);
+    assert.deepEqual(doneErrors(r), ['TASK-8']);
+  } finally {
+    sh('git', ['tag', '-d', 'honest-status-start']);
+    backlog('task', 'edit', 'TASK-8', '-s', 'To Do');
+  }
+  // No tag: back to every unmerged Done task flagged.
+  assert.deepEqual(doneErrors(JSON.parse(truth(['--json']).out)), ['TASK-2']);
+});
+
 // --merge, in its own repo where main tracks the backlog files.
 const mdir = mkdtempSync(join(tmpdir(), 'truth-merge-'));
 after(() => rmSync(mdir, { recursive: true, force: true }));

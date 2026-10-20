@@ -29,6 +29,9 @@ const STATUSES = ['To Do', 'In Progress', 'Blocked', 'In Review', 'Done'];
 // from the branch being merged. No file, or no globs: nothing merges without a human.
 const POLICY_FILE = '.honest-status/test-only';
 const POLICY_TRAILER = 'policy:test-only';
+// Adopting a project with history: tasks already Done at this git tag count as built without a
+// merge commit. No tag: no baseline.
+const BASELINE_TAG = 'honest-status-start';
 
 interface ListTask {
   id: string;
@@ -97,6 +100,18 @@ function findRoot(start: string): string | null {
   return run('git', ['rev-parse', '--show-toplevel'], start)?.trim() ?? resolve(start);
 }
 
+// Lowercased ids of the tasks whose files say `status: Done` at BASELINE_TAG.
+function doneAtBaseline(root: string): Set<string> {
+  const ids = new Set<string>();
+  const files = (run('git', ['ls-tree', '-r', '--name-only', BASELINE_TAG], root) ?? '').split('\n');
+  for (const file of files.filter((f) => /(^|\/)tasks\/[^/]+\.md$/.test(f))) {
+    const front = (run('git', ['show', `${BASELINE_TAG}:${file}`], root) ?? '').split(/^---\s*$/m)[1] ?? '';
+    const id = /^id:\s*['"]?([^'"\n]+?)['"]?\s*$/m.exec(front)?.[1];
+    if (id && /^status:\s*['"]?Done['"]?\s*$/m.test(front)) ids.add(id.toLowerCase());
+  }
+  return ids;
+}
+
 const norm = (name: string): string => name.trim().replace(/^@/, '').toLowerCase();
 const idNumber = (id: string): number => Number(/\d+$/.exec(id)?.[0] ?? 0);
 
@@ -126,6 +141,8 @@ function buildReport(root: string, opts: Options): Report {
     warnings.push({ task: '-', message: `no "${opts.mainBranch}" branch, so Done can't be checked against merges` });
   }
   const merged = (id: string): boolean => mainSubjects?.some((s) => s.includes(`(${id.toLowerCase()})`)) ?? false;
+  const baseline = doneAtBaseline(root);
+  const proven = (id: string): boolean => merged(id) || baseline.has(id.toLowerCase());
 
   // Re-verify every policy merge against the policy as it stood before it.
   const log = hasMain ? run('git', ['log', opts.mainBranch, '--format=%H%x09%(trailers:key=Approved-by,valueonly,separator=%x2C)%x09%s'], root) : null;
@@ -149,7 +166,7 @@ function buildReport(root: string, opts: Options): Report {
   for (const t of tasks) {
 
     if (t.status === 'Done') {
-      if (mainSubjects && !merged(t.id)) {
+      if (mainSubjects && !proven(t.id)) {
         errors.push({
           task: t.id,
           message: `is Done, but no commit with "(${t.id})" is on ${opts.mainBranch}; only a merge makes a task Done. Move it back: \`backlog task edit ${t.id} -s "In Review"\`.`,
@@ -199,7 +216,7 @@ function buildReport(root: string, opts: Options): Report {
     waiting,
     inProgress: inProgress.map((t) => t.id),
     next: next ? { id: next.id, title: next.title } : null,
-    built: tasks.filter((t) => t.status === 'Done' && merged(t.id)).map((t) => t.id),
+    built: tasks.filter((t) => t.status === 'Done' && proven(t.id)).map((t) => t.id),
     errors,
     warnings,
   };

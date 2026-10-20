@@ -38,6 +38,15 @@ Install, from a repo that uses Backlog.md with the statuses
 
 Or try a local checkout: `claude --plugin-dir /path/to/honest-status`.
 
+Adopting a project that already has Done tasks? They have no merge commits, so the board would
+flag every one. Commit the board as it is and tag it first; tasks Done at the tag count as built:
+
+```sh
+git tag honest-status-start main
+```
+
+Tasks set Done after the tag still need a merge.
+
 Options (plugin settings, all optional): `human`, who tasks waiting on you are assigned to (unset:
 any assignee counts); `main`, the branch whose commits prove Done (unset: `main`); and `checks`, a
 command the merge runs on the merged result, like `npm test` (unset: no checks).
