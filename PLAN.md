@@ -71,6 +71,13 @@ honest-status/
 5. `claude plugin validate`, a `.claude-plugin/marketplace.json`, publish.
 6. The test-only policy merge.
 7. A second, public project as the showcase.
+8. Adopting existing projects: a baseline (the git tag `honest-status-start`) before which Done
+   tasks count as built without a merge commit, so a project with history isn't flagged on day one.
+
+## Later extras
+
+- Feedback intake: turning user or tester feedback into Backlog.md tasks. It doesn't touch the
+  truth rules, and Backlog.md can already create tasks.
 
 ## Constraints
 
@@ -80,5 +87,4 @@ honest-status/
 
 ## Open questions
 
-- Should feedback intake and adopting existing projects be plugin features, or later extras?
 - Final name.
