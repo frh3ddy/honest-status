@@ -117,6 +117,19 @@ function taskAt(root: string, ref: string, file: string): { id: string; done: bo
   };
 }
 
+// The merge commits on main: subject `feat(<id>): …` with Approved-by human or policy:test-only,
+// which is what --merge writes. Ids are lowercased. Trailers can be forged; this is a guardrail.
+// ponytail: a later revert of the commit isn't noticed; check "This reverts commit" if it matters.
+function mergeCommits(root: string, main: string): { hash: string; id: string; approvedBy: string }[] {
+  const log = run('git', ['log', main, '--format=%H%x09%(trailers:key=Approved-by,valueonly,separator=%x2C)%x09%s'], root) ?? '';
+  return log.split('\n').flatMap((line) => {
+    const [hash = '', approvedBy = '', subject = ''] = line.split('\t');
+    const id = /^feat\(([^)]+)\):/i.exec(subject)?.[1]?.toLowerCase();
+    const by = approvedBy.trim();
+    return id && (by === 'human' || by === POLICY_TRAILER) ? [{ hash, id, approvedBy: by }] : [];
+  });
+}
+
 // Lowercased ids of the tasks whose files say `status: Done` at BASELINE_TAG.
 function doneAtBaseline(root: string): Set<string> {
   const ids = new Set<string>();
@@ -150,23 +163,19 @@ function buildReport(root: string, opts: Options): Report {
   }
 
   const hasMain = run('git', ['rev-parse', '--verify', '--quiet', `${opts.mainBranch}^{commit}`], root) !== null;
-  const mainSubjects = hasMain
-    ? (run('git', ['log', opts.mainBranch, '--format=%s'], root) ?? '').toLowerCase().split('\n')
-    : null;
-  if (!mainSubjects) {
+  if (!hasMain) {
     warnings.push({ task: '-', message: `no "${opts.mainBranch}" branch, so Done can't be checked against merges` });
   }
-  const merged = (id: string): boolean => mainSubjects?.some((s) => s.includes(`(${id.toLowerCase()})`)) ?? false;
+  const mergeLog = hasMain ? mergeCommits(root, opts.mainBranch) : [];
+  const mergedIds = new Set(mergeLog.map((c) => c.id));
+  const merged = (id: string): boolean => mergedIds.has(id.toLowerCase());
   const baseline = doneAtBaseline(root);
   const proven = (id: string): boolean => merged(id) || baseline.has(id.toLowerCase());
 
   // Re-verify every policy merge against the policy as it stood before it.
-  const log = hasMain ? run('git', ['log', opts.mainBranch, '--format=%H%x09%(trailers:key=Approved-by,valueonly,separator=%x2C)%x09%s'], root) : null;
-  for (const line of (log ?? '').split('\n')) {
-    const [hash = '', approvedBy = '', subject = ''] = line.split('\t');
-    if (approvedBy.trim() !== POLICY_TRAILER) continue;
-    const id = /\(([^)]+)\)/.exec(subject)?.[1] ?? '-';
-    const problems = testOnlyProblems(root, id, `${hash}^`, [`${hash}^`, hash]);
+  for (const { hash, id, approvedBy } of mergeLog) {
+    if (approvedBy !== POLICY_TRAILER) continue;
+    const problems = testOnlyProblems(root, id.toUpperCase(), `${hash}^`, [`${hash}^`, hash]);
     if (problems.length > 0) {
       errors.push({ task: id, message: `was merged by the test-only policy in ${hash.slice(0, 7)}, but ${problems.join('; ')}` });
     }
@@ -182,16 +191,16 @@ function buildReport(root: string, opts: Options): Report {
   for (const t of tasks) {
 
     if (t.status === 'Done') {
-      if (mainSubjects && !proven(t.id)) {
+      if (hasMain && !proven(t.id)) {
         errors.push({
           task: t.id,
-          message: `is Done, but no commit with "(${t.id})" is on ${opts.mainBranch}; only a merge makes a task Done. Move it back: \`backlog task edit ${t.id} -s "In Review"\`.`,
+          message: `is Done, but ${opts.mainBranch} has no "feat(${t.id}): …" commit with Approved-by; only a merge makes a task Done. Move it back: \`backlog task edit ${t.id} -s "In Review"\`.`,
         });
       }
       continue;
     }
     if (merged(t.id)) {
-      warnings.push({ task: t.id, message: `${opts.mainBranch} has a commit with "(${t.id})": if it was merged, set it Done` });
+      warnings.push({ task: t.id, message: `${opts.mainBranch} has the merge commit "feat(${t.id}): …": set it Done` });
     }
 
     if (t.status === 'In Review') {
@@ -312,8 +321,9 @@ function merge(root: string, id: string, opts: Options, branchArg: string | null
   if (git('rev-parse', '--verify', '--quiet', `${opts.mainBranch}^{commit}`) === null) {
     return fail(`there is no "${opts.mainBranch}" branch`);
   }
-  const subjects = (git('log', opts.mainBranch, '--format=%s') ?? '').toLowerCase();
-  if (subjects.includes(`(${id.toLowerCase()})`)) return fail(`${opts.mainBranch} already has a commit with "(${id})"`);
+  if (mergeCommits(root, opts.mainBranch).some((c) => c.id === id.toLowerCase())) {
+    return fail(`${opts.mainBranch} already has the merge commit "feat(${id}): …"`);
+  }
 
   let branch = branchArg;
   if (!branch) {

@@ -27,7 +27,10 @@ const truth = (args: string[], input = ''): { out: string; code: number } => {
 sh('git', ['init', '-q', '-b', 'main']);
 backlog('init', 'demo', '--defaults', '--integration-mode', 'none');
 sh('sed', ['-i.bak', 's/^statuses: .*/statuses: ["To Do", "In Progress", "Blocked", "In Review", "Done"]/', 'backlog/config.yml']);
-sh('git', ['commit', '-q', '--allow-empty', '-m', 'feat(TASK-1): merged one']);
+sh('git', ['commit', '-q', '--allow-empty', '-m', 'feat(TASK-1): merged one', '--trailer', 'Approved-by: human']);
+// Neither proves TASK-2 Done: only the merge's own feat(<id>) commit with Approved-by does.
+sh('git', ['commit', '-q', '--allow-empty', '-m', 'wip(TASK-2)']);
+sh('git', ['commit', '-q', '--allow-empty', '-m', 'feat(TASK-2): no trailer']);
 
 const task = (...args: string[]) => backlog('task', 'create', ...args, '--plain');
 task('merged and done', '-s', 'Done'); // TASK-1
@@ -186,7 +189,7 @@ test('merge squashes with the task id and Approved-by: human, and sets Done', ()
   const board = JSON.parse(execFileSync('node', [TRUTH, '--json'], { cwd: mdir, encoding: 'utf8' }));
   assert.deepEqual(board.built, ['TASK-1']);
   assert.deepEqual(board.errors, []);
-  assert.match(merge('TASK-1').out, /already has a commit with "\(TASK-1\)"/);
+  assert.match(merge('TASK-1').out, /already has the merge commit "feat\(TASK-1\)/);
 });
 
 test('policy merge refuses anything but tests, and leaves main alone', () => {

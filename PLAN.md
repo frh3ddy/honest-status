@@ -2,7 +2,7 @@
 
 A Claude Code plugin that keeps project status honest on top of Backlog.md. An agent can move work
 forward and ask for review, but only a human merge, or a narrow written test-only policy, makes a
-task Done. Status lives in the repo, and git proves Done.
+task Done. Status lives in the repo, and the merge commit records Done.
 
 ## Why
 

@@ -2,7 +2,7 @@
 
 A Claude Code plugin that keeps project status honest on top of
 [Backlog.md](https://github.com/MrLesk/Backlog.md). Your agent can move work forward and ask for
-review, but only your merge makes a task Done, and git proves it.
+review, but only your merge makes a task Done, and the merge commit records it.
 
 **Status: early.** Built in the open; this repo tracks its own tasks with Backlog.md.
 
@@ -70,7 +70,10 @@ Claude Code, Backlog.md, git, Node 22.18+ (runs the checker's TypeScript directl
 
 ## Guardrails, not security
 
-Claude has git access and could forge a commit trailer if it tried. The goal is to make the
+Claude has git access and could forge a commit trailer if it tried. The board counts a task as
+built when main has a `feat(<task-id>): …` commit with `Approved-by: human` or
+`policy:test-only`; it trusts that trailer and doesn't check the commit matches what you
+reviewed. The goal is to make the
 honest path the easy one and make drift visible, not to stop a determined agent.
 
 ## License
