@@ -36,7 +36,7 @@ const task = (...args: string[]) => backlog('task', 'create', ...args, '--plain'
 task('merged and done', '-s', 'Done'); // TASK-1
 task('done, never merged', '-s', 'Done'); // TASK-2
 task('review, no summary', '-s', 'In Review', '-a', '@fredy'); // TASK-3
-task('review, summary without how-to', '-s', 'In Review', '-a', '@fredy', '--final-summary', 'did it'); // TASK-4
+task('review, empty how-to', '-s', 'In Review', '-a', '@fredy', '--final-summary', 'did it\n\nHow to review:'); // TASK-4
 task('review, good, wrong person', '-s', 'In Review', '-a', '@claude', '--final-summary', 'did it\n\nHow to review: run it'); // TASK-5
 task('blocked, unassigned', '-s', 'Blocked'); // TASK-6
 task('question, unassigned', '-l', 'question'); // TASK-7
@@ -72,6 +72,8 @@ test('flags missing statuses', () => {
 test('without --human, any assignee counts', () => {
   const r = JSON.parse(truth(['--json']).out);
   assert.ok(!r.errors.some((e: { task: string }) => e.task === 'TASK-5'));
+  assert.match(r.warnings.map((w: { message: string }) => w.message).join('\n'), /`human` option isn't set/);
+  assert.ok(!JSON.parse(truth(['--json', '--human', '@fredy']).out).warnings.some((w: { message: string }) => /human/.test(w.message)));
 });
 
 test('board exits 1 on errors', () => {

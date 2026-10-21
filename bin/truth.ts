@@ -209,8 +209,8 @@ function buildReport(root: string, opts: Options): Report {
       const summary = view.finalSummary?.trim() ?? '';
       if (summary === '') {
         errors.push({ task: t.id, message: 'is In Review without a final summary: add one with --final-summary' });
-      } else if (!/how to review/i.test(summary)) {
-        errors.push({ task: t.id, message: 'is In Review, but its final summary has no "How to review:" part' });
+      } else if (!/how to review:\s*\S/i.test(summary)) {
+        errors.push({ task: t.id, message: 'is In Review, but its final summary has no "How to review:" part with steps after it' });
       }
     }
 
@@ -224,13 +224,10 @@ function buildReport(root: string, opts: Options): Report {
     }
   }
 
-  const inProgress = tasks.filter((t) => t.status === 'In Progress');
-  if (inProgress.length > 1) {
-    warnings.push({
-      task: inProgress.map((t) => t.id).join(', '),
-      message: `${inProgress.length} tasks are In Progress; one per session is the rhythm`,
-    });
+  if (!human && waiting.length > 0) {
+    warnings.push({ task: '-', message: "the `human` option isn't set, so any assignee counts and assignments aren't really checked" });
   }
+  const inProgress = tasks.filter((t) => t.status === 'In Progress');
   const next = tasks.find((t) => t.status === 'To Do' && t.isReady && !isQuestion(t)) ?? null;
 
   return {

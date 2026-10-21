@@ -61,8 +61,9 @@ git tag honest-status-start main
 Tasks set Done after the tag still need a merge.
 
 Options (plugin settings, all optional): `human`, who tasks waiting on you are assigned to (unset:
-any assignee counts); `main`, the branch whose commits prove Done (unset: `main`); and `checks`, a
-command the merge runs on the merged result, like `npm test` (unset: no checks).
+any assignee counts, and the board warns that assignments aren't checked); `main`, the branch
+whose commits prove Done (unset: `main`); and `checks`, a command the merge runs on the merged
+result, like `npm test` (unset: no checks).
 
 ## Requirements
 
@@ -73,8 +74,9 @@ Claude Code, Backlog.md, git, Node 22.18+ (runs the checker's TypeScript directl
 Claude has git access and could forge a commit trailer if it tried. The board counts a task as
 built when main has a `feat(<task-id>): …` commit with `Approved-by: human` or
 `policy:test-only`; it trusts that trailer and doesn't check the commit matches what you
-reviewed. The goal is to make the
-honest path the easy one and make drift visible, not to stop a determined agent.
+reviewed. "How to review:" is a prompt for evidence, not proof: the board only checks that the
+final summary has steps after it. The goal is to make the honest path the easy one and make drift
+visible, not to stop a determined agent.
 
 ## License
 
